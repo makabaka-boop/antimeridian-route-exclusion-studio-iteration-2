@@ -1,12 +1,21 @@
 import { useState } from 'react';
 import type { MicroPoint } from './geometry/types';
 import { scenarios } from './geometry/scenarios';
+import { compressRoute, type CompressResult } from './geometry/compress';
 import { useDerivedGeometry } from './hooks/useDerivedGeometry';
 import { Chart, type EditMode } from './components/Chart';
 import { IntervalTable } from './components/IntervalTable';
 import { PointEditor } from './components/PointEditor';
+import { CompressPanel } from './components/CompressPanel';
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+
+/** 预演与其数据源的绑定：源（禁区/航路原始数组）一旦被编辑替换，预演立即失效。 */
+interface PreviewState {
+  zoneRef: MicroPoint[];
+  routeRef: MicroPoint[];
+  result: CompressResult;
+}
 
 export default function App() {
   const [zoneRaw, setZoneRaw] = useState<MicroPoint[]>(scenarios[0].zone);
@@ -14,8 +23,13 @@ export default function App() {
   const [mode, setMode] = useState<EditMode>('none');
   const [selectedInterval, setSelectedInterval] = useState<number | null>(null);
   const [scenarioId, setScenarioId] = useState(scenarios[0].id);
+  const [preview, setPreview] = useState<PreviewState | null>(null);
 
   const derived = useDerivedGeometry(zoneRaw, routeRaw);
+
+  // 禁区或航点编辑都会换上新数组 → 引用不等 → 旧预演立即撤销（不自动重算）
+  const activePreview =
+    preview && preview.zoneRef === zoneRaw && preview.routeRef === routeRaw ? preview.result : null;
 
   const loadScenario = (id: string) => {
     const s = scenarios.find((x) => x.id === id);
@@ -38,6 +52,18 @@ export default function App() {
     else setRouteRaw((pts) => pts.map((x, i) => (i === index ? q : x)));
   };
 
+  const runPreview = () => {
+    if (!derived.zone || !derived.route) return;
+    setPreview({ zoneRef: zoneRaw, routeRef: routeRaw, result: compressRoute(derived.zone, routeRaw) });
+  };
+
+  const confirmPreview = () => {
+    if (!activePreview?.kept) return; // 无方案时没有可交付的航路
+    setRouteRaw(activePreview.keptPoints.map((p) => ({ ...p })));
+    setPreview(null);
+    setSelectedInterval(null);
+  };
+
   return (
     <div className="app">
       <header>
@@ -57,6 +83,13 @@ export default function App() {
             </button>
             <button className={mode === 'zone' ? 'active' : ''} onClick={() => setMode(mode === 'zone' ? 'none' : 'zone')}>
               ＋ 禁区点
+            </button>
+            <button
+              disabled={!derived.zone || !derived.route}
+              title="从现有航点中保留子序列，逐边检查捷径安全（边界擦触同样不可用）"
+              onClick={runPreview}
+            >
+              安全压缩预演
             </button>
             <button onClick={() => { setZoneRaw([]); setRouteRaw([]); setSelectedInterval(null); }}>清空</button>
           </div>
@@ -80,12 +113,20 @@ export default function App() {
             mode={mode}
             onAddPoint={addPoint}
             onDragPoint={dragPoint}
+            preview={activePreview?.kept ? { points: activePreview.preview, kept: activePreview.kept } : null}
           />
         </div>
 
         <aside>
           <PointEditor title="凸禁区（3～20 顶点，整数 micro°）" kind="zone" points={zoneRaw} error={derived.zoneError} onChange={setZoneRaw} />
           <PointEditor title="航路（2～80 点，整数 micro°）" kind="route" points={routeRaw} error={derived.routeError} onChange={setRouteRaw} />
+          {activePreview && (
+            <CompressPanel
+              result={activePreview}
+              onConfirm={confirmPreview}
+              onCancel={() => setPreview(null)}
+            />
+          )}
           <section className="intervals">
             <h3>位于禁区内的参数区间（边界计入）</h3>
             <IntervalTable

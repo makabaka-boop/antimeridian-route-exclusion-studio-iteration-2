@@ -53,6 +53,21 @@ aside section { margin-bottom: 14px; background: var(--panel); border: 1px solid
 .route { stroke: var(--route); stroke-width: 2; fill: none; }
 .intercept { stroke: var(--intercept); stroke-width: 3.5; fill: none; stroke-linecap: round; }
 
+/* 安全压缩预演：绿色虚线捷径 + 保留下标圆环，确认前不改动原航路 */
+.preview { stroke: var(--enter); stroke-width: 2.5; fill: none; stroke-dasharray: 7 4; stroke-linecap: round; pointer-events: none; }
+.preview-keep { fill: none; stroke: var(--enter); stroke-width: 1.6; pointer-events: none; }
+
+.compress-panel h3 { color: var(--enter); }
+.compress-plan { margin: 4px 0 8px; font-variant-numeric: tabular-nums; }
+.compress-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+.compress-actions .confirm { border-color: var(--enter); color: var(--enter); }
+.compress-infeasible { color: #ff9a9a; background: #3a1620; border: 1px solid #6b2536; border-radius: 4px; padding: 5px 8px; }
+.compress-verdicts { font-size: 11.5px; margin-bottom: 6px; }
+.compress-verdicts summary { cursor: pointer; color: var(--muted); }
+.compress-verdicts .verdict-count { color: var(--text); }
+.compress-verdicts ul { margin: 6px 0 0; padding-left: 18px; max-height: 160px; overflow-y: auto; }
+.compress-verdicts li { margin: 2px 0; }
+
 .marker { cursor: grab; }
 .marker-zone circle { fill: var(--zone-stroke); stroke: #fff2; }
 .marker-route circle { fill: var(--accent); stroke: #fff2; }

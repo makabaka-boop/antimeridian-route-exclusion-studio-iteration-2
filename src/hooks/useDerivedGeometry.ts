@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { MicroPoint } from '../geometry/types';
+import type { MicroPoint, Route, Zone } from '../geometry/types';
 import { createZone } from '../geometry/zone';
 import { createRoute } from '../geometry/route';
 import { analyzeRoute, type AnalysisResult } from '../geometry/intercept';
@@ -8,6 +8,9 @@ import { buildRoutePieces, buildZonePieces, type RoutePiece, type ZonePiece } fr
 export interface Derived {
   zoneError: string | null;
   routeError: string | null;
+  /** 校验通过的禁区/航路（压缩预演与画面共用同一份几何对象） */
+  zone: Zone | null;
+  route: Route | null;
   result: AnalysisResult | null;
   routePieces: RoutePiece[];
   zonePieces: ZonePiece[];
@@ -16,8 +19,8 @@ export interface Derived {
 /** 从原始录入点到画面/区间表的唯一数据通道，保证两者指向同一条被截航路。 */
 export function useDerivedGeometry(zoneRaw: MicroPoint[], routeRaw: MicroPoint[]): Derived {
   return useMemo(() => {
-    let zone: ReturnType<typeof createZone> | null = null;
-    let route: ReturnType<typeof createRoute> | null = null;
+    let zone: Zone | null = null;
+    let route: Route | null = null;
     let zoneError: string | null = null;
     let routeError: string | null = null;
 
@@ -33,12 +36,12 @@ export function useDerivedGeometry(zoneRaw: MicroPoint[], routeRaw: MicroPoint[]
     }
 
     if (!zone || !route) {
-      return { zoneError, routeError, result: null, routePieces: [], zonePieces: [] };
+      return { zoneError, routeError, zone, route, result: null, routePieces: [], zonePieces: [] };
     }
 
     const result = analyzeRoute(zone.points, zone, route.points);
     const routePieces = buildRoutePieces(route.points, result.segHits);
     const zonePieces = buildZonePieces(zone.points);
-    return { zoneError, routeError, result, routePieces, zonePieces };
+    return { zoneError, routeError, zone, route, result, routePieces, zonePieces };
   }, [zoneRaw, routeRaw]);
 }

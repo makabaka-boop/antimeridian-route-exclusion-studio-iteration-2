@@ -19,6 +19,12 @@ const latOfY = (y: number): number => LAT_MIN + ((H - y) / H) * (LAT_MAX - LAT_M
 
 export type EditMode = 'none' | 'route' | 'zone';
 
+/** 安全压缩预演（与求解结果同源）：展开后的预演折线 + 保留的原航点下标 */
+export interface PreviewView {
+  points: MicroPoint[];
+  kept: number[];
+}
+
 interface ChartProps {
   zoneRaw: MicroPoint[];
   routeRaw: MicroPoint[];
@@ -30,6 +36,7 @@ interface ChartProps {
   mode: EditMode;
   onAddPoint: (p: MicroPoint) => void;
   onDragPoint: (kind: 'zone' | 'route', index: number, p: MicroPoint) => void;
+  preview: PreviewView | null;
 }
 
 const f = (v: Fraction): number => toNumber(v);
@@ -127,6 +134,25 @@ export function Chart(props: ChartProps) {
         )}
       </g>
 
+      {/* 安全压缩预演：折线与保留下标均来自同一份求解结果，确认前不改动原航路 */}
+      {props.preview && props.preview.points.length >= 2 && (
+        <g className="preview-layer">
+          <PreviewRoute unwrapped={props.preview.points} />
+          {props.preview.kept.map((idx) => {
+            const p = props.routeRaw[idx];
+            return p ? (
+              <circle
+                key={idx}
+                cx={xOf(wrapToView(p.lon / 1e6))}
+                cy={yOf(p.lat / 1e6)}
+                r={7}
+                className="preview-keep"
+              />
+            ) : null;
+          })}
+        </g>
+      )}
+
       {/* 进入/离开见证：与区间表行联动 */}
       <g className="witness-layer">
         {props.intervals.map((iv, i) => (
@@ -163,44 +189,83 @@ export function Chart(props: ChartProps) {
   );
 }
 
-/** 按短弧展开的原始航路，在日界线处同样分段绘制。 */
-function UnwrappedRoute({ raw }: { raw: MicroPoint[] }) {
-  // 这里的 raw 已经是展开/校验由上层保证；画面上对未通过校验的输入仍按相邻短弧连线
-  const segs: { x1: number; y1: number; x2: number; y2: number }[] = [];
-  let prevLon = raw[0].lon / 1e6;
-  for (let i = 0; i < raw.length - 1; i++) {
-    const aLat = raw[i].lat / 1e6;
-    const bLat = raw[i + 1].lat / 1e6;
-    let d = raw[i + 1].lon / 1e6 - prevLon;
-    while (d <= -180) d += 360;
-    while (d >= 180) d -= 360;
-    const nextLon = prevLon + d;
+interface DrawnSeg {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
 
-    // 沿段在 lon=180+360q 处分段
+/**
+ * 把一条已按短弧展开的折线（度）在日界线 180+360q 处分段，
+ * 每个子片段按其中点所在世界窗口归一化：日界线切点贴住本侧边缘（+180°），
+ * 不能把所有点各自卷绕到 [-180,180)，否则西侧短片段会被甩到 -180° 形成横跨整图的长线。
+ */
+function splitPolylineDeg(unwrapped: { lat: number; lon: number }[]): DrawnSeg[] {
+  const segs: DrawnSeg[] = [];
+  for (let i = 0; i < unwrapped.length - 1; i++) {
+    const aLat = unwrapped[i].lat;
+    const bLat = unwrapped[i + 1].lat;
+    const aLon = unwrapped[i].lon;
+    const bLon = unwrapped[i + 1].lon;
+
     const crossings: number[] = [];
-    const lo = Math.min(prevLon, nextLon);
-    const hi = Math.max(prevLon, nextLon);
-    for (let q = -2; q <= 2; q++) {
+    const lo = Math.min(aLon, bLon);
+    const hi = Math.max(aLon, bLon);
+    const qLo = Math.ceil((lo - 180) / 360);
+    const qHi = Math.floor((hi - 180) / 360);
+    for (let q = qLo; q <= qHi; q++) {
       const x = 180 + 360 * q;
-      if (x > lo && x < hi) crossings.push((x - prevLon) / (nextLon - prevLon));
+      if (x > lo && x < hi) crossings.push((x - aLon) / (bLon - aLon));
     }
-    const ts = [0, ...crossings.sort((x, y) => x - y), 1];
+    const ts = [0, ...crossings.sort((u, v) => u - v), 1];
     for (let k = 0; k < ts.length - 1; k++) {
-      const lonA = prevLon + (nextLon - prevLon) * ts[k];
-      const lonB = prevLon + (nextLon - prevLon) * ts[k + 1];
-      // 每个子片段按其中点所在世界窗口归一化：日界线切点贴住本侧边缘（+180°），
-      // 不能把所有点各自卷绕到 [-180,180)，否则西侧短片段会被甩到 -180° 形成横跨整图的长线。
+      const lonA = aLon + (bLon - aLon) * ts[k];
+      const lonB = aLon + (bLon - aLon) * ts[k + 1];
       const midLon = (lonA + lonB) / 2;
       const q = Math.floor((midLon + 180) / 360);
       const toWindow = (lon: number): number => lon - 360 * q;
-      segs.push({ x1: xOf(toWindow(lonA)), y1: yOf(aLat + (bLat - aLat) * ts[k]), x2: xOf(toWindow(lonB)), y2: yOf(aLat + (bLat - aLat) * ts[k + 1]) });
+      segs.push({
+        x1: xOf(toWindow(lonA)),
+        y1: yOf(aLat + (bLat - aLat) * ts[k]),
+        x2: xOf(toWindow(lonB)),
+        y2: yOf(aLat + (bLat - aLat) * ts[k + 1]),
+      });
     }
-    prevLon = nextLon;
   }
+  return segs;
+}
+
+/** 按短弧展开的原始航路，在日界线处同样分段绘制。 */
+function UnwrappedRoute({ raw }: { raw: MicroPoint[] }) {
+  // 这里的 raw 已经是展开/校验由上层保证；画面上对未通过校验的输入仍按相邻短弧连线
+  const unwrapped: { lat: number; lon: number }[] = [];
+  let prevLon = raw[0].lon / 1e6;
+  unwrapped.push({ lat: raw[0].lat / 1e6, lon: prevLon });
+  for (let i = 1; i < raw.length; i++) {
+    let d = raw[i].lon / 1e6 - prevLon;
+    while (d <= -180) d += 360;
+    while (d >= 180) d -= 360;
+    prevLon += d;
+    unwrapped.push({ lat: raw[i].lat / 1e6, lon: prevLon });
+  }
+  const segs = splitPolylineDeg(unwrapped);
   return (
     <>
       {segs.map((s, i) => (
         <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} className="route" />
+      ))}
+    </>
+  );
+}
+
+/** 压缩预演折线：求解结果给出的展开坐标（micro°），与原航路同一套日界线分段规则。 */
+function PreviewRoute({ unwrapped }: { unwrapped: MicroPoint[] }) {
+  const segs = splitPolylineDeg(unwrapped.map((p) => ({ lat: p.lat / 1e6, lon: p.lon / 1e6 })));
+  return (
+    <>
+      {segs.map((s, i) => (
+        <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} className="preview" />
       ))}
     </>
   );
