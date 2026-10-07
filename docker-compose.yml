@@ -1,0 +1,8 @@
+services:
+  chart:
+    build: .
+    image: antimeridian-chart:latest
+    container_name: antimeridian-chart
+    ports:
+      - "8080:80"
+    restart: unless-stopped
