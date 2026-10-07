@@ -92,6 +92,20 @@ export const scenarios: Scenario[] = [
     ],
   },
   {
+    id: 'compress',
+    name: '安全压缩（南绕捷径）',
+    description: '禁区跨日界线；航路先南下绕行再北上，多个中间航点冗余。直连会切进禁区，预演应保留最少的绕行点。',
+    zone: crossingBox,
+    route: [
+      { lat: deg(5), lon: deg(150) },
+      { lat: deg(-10), lon: deg(160) },
+      { lat: deg(-10), lon: deg(175) },
+      { lat: deg(-10), lon: deg(-175) },
+      { lat: deg(-10), lon: deg(-160) },
+      { lat: deg(5), lon: deg(-150) },
+    ],
+  },
+  {
     id: 'ambiguous',
     name: '180° 歧义边（应拒绝）',
     description: '禁区一条边经度恰好跨 180°，编辑器应直接拒绝。',

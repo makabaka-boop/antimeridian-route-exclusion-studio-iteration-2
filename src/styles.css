@@ -53,6 +53,18 @@ aside section { margin-bottom: 14px; background: var(--panel); border: 1px solid
 .route { stroke: var(--route); stroke-width: 2; fill: none; }
 .intercept { stroke: var(--intercept); stroke-width: 3.5; fill: none; stroke-linecap: round; }
 
+/* 安全压缩预演：青色虚线叠加，不改动原航路 */
+.preview { stroke: var(--accent); stroke-width: 2.5; fill: none; stroke-dasharray: 7 4; stroke-linecap: round; }
+.preview-marker circle.preview-ring { fill: #0e2a40; stroke: var(--accent); stroke-width: 2; }
+.preview-marker text { fill: var(--accent); font-size: 9px; text-anchor: middle; pointer-events: none; font-weight: bold; }
+
+.compression-controls button:disabled { opacity: 0.45; cursor: default; }
+.compression-ok { color: #8be0b0; background: #10281c; border: 1px solid #26503c; border-radius: 4px; padding: 5px 8px; margin-bottom: 6px; font-size: 12px; }
+.hits-explain h4 { font-size: 12px; color: var(--muted); font-weight: normal; margin: 6px 0 4px; }
+.hit-line { font-variant-numeric: tabular-nums; white-space: normal; line-height: 1.45; }
+.kept-table { margin-top: 5px; }
+.kept-table td { padding: 2px 6px; }
+
 .marker { cursor: grab; }
 .marker-zone circle { fill: var(--zone-stroke); stroke: #fff2; }
 .marker-route circle { fill: var(--accent); stroke: #fff2; }

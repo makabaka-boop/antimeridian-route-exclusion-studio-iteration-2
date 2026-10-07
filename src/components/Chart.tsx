@@ -4,6 +4,8 @@ import type { Fraction } from '../geometry/fraction';
 import { toNumber } from '../geometry/fraction';
 import type { RoutePiece, ZonePiece } from '../geometry/display';
 import type { GlobalInterval } from '../geometry/intercept';
+import type { CompressionResult } from '../geometry/compress';
+import { shortArcDelta } from '../geometry/unwrap';
 
 const W = 1080;
 const H = 480;
@@ -25,6 +27,7 @@ interface ChartProps {
   zonePieces: ZonePiece[];
   routePieces: RoutePiece[];
   intervals: GlobalInterval[];
+  compression: CompressionResult | null;
   selectedInterval: number | null;
   onSelectInterval: (i: number | null) => void;
   mode: EditMode;
@@ -127,6 +130,16 @@ export function Chart(props: ChartProps) {
         )}
       </g>
 
+      {/* 安全压缩预演：与保留下标、命中说明来自同一次 compressRoute，确认前不改原航路 */}
+      {props.compression?.feasible && (
+        <g className="preview-layer">
+          <PreviewRoute
+            points={props.compression.previewPoints}
+            kept={props.compression.kept ?? []}
+          />
+        </g>
+      )}
+
       {/* 进入/离开见证：与区间表行联动 */}
       <g className="witness-layer">
         {props.intervals.map((iv, i) => (
@@ -163,44 +176,95 @@ export function Chart(props: ChartProps) {
   );
 }
 
-/** 按短弧展开的原始航路，在日界线处同样分段绘制。 */
-function UnwrappedRoute({ raw }: { raw: MicroPoint[] }) {
-  // 这里的 raw 已经是展开/校验由上层保证；画面上对未通过校验的输入仍按相邻短弧连线
+/**
+ * 把一条**已经按短弧展开到同一平面**的折线（microdegree）切成画面线段：
+ * 沿每个 180+360q 内部交点断开，子片段按其中点所在世界窗口归一化，
+ * 日界线切点贴住本侧边缘（+180°），杜绝横跨整图的连线。
+ */
+function liftedRouteScreenSegments(points: MicroPoint[]): { x1: number; y1: number; x2: number; y2: number }[] {
   const segs: { x1: number; y1: number; x2: number; y2: number }[] = [];
-  let prevLon = raw[0].lon / 1e6;
-  for (let i = 0; i < raw.length - 1; i++) {
-    const aLat = raw[i].lat / 1e6;
-    const bLat = raw[i + 1].lat / 1e6;
-    let d = raw[i + 1].lon / 1e6 - prevLon;
-    while (d <= -180) d += 360;
-    while (d >= 180) d -= 360;
-    const nextLon = prevLon + d;
+  for (let i = 0; i < points.length - 1; i++) {
+    const aLat = points[i].lat / 1e6;
+    const bLat = points[i + 1].lat / 1e6;
+    const prevLon = points[i].lon / 1e6;
+    const nextLon = points[i + 1].lon / 1e6;
 
-    // 沿段在 lon=180+360q 处分段
-    const crossings: number[] = [];
     const lo = Math.min(prevLon, nextLon);
     const hi = Math.max(prevLon, nextLon);
-    for (let q = -2; q <= 2; q++) {
+    // 内部穿越点 q 满足 lo < 180+360q < hi（短弧边跨度 <180°，至多一个）
+    const qLo = Math.floor((lo - 180) / 360) + 1;
+    const qHi = Math.ceil((hi - 180) / 360) - 1;
+    const crossings: number[] = [];
+    for (let q = qLo; q <= qHi; q++) {
       const x = 180 + 360 * q;
-      if (x > lo && x < hi) crossings.push((x - prevLon) / (nextLon - prevLon));
+      crossings.push((x - prevLon) / (nextLon - prevLon));
     }
     const ts = [0, ...crossings.sort((x, y) => x - y), 1];
     for (let k = 0; k < ts.length - 1; k++) {
       const lonA = prevLon + (nextLon - prevLon) * ts[k];
       const lonB = prevLon + (nextLon - prevLon) * ts[k + 1];
-      // 每个子片段按其中点所在世界窗口归一化：日界线切点贴住本侧边缘（+180°），
-      // 不能把所有点各自卷绕到 [-180,180)，否则西侧短片段会被甩到 -180° 形成横跨整图的长线。
+      // 每个子片段按其中点所在世界窗口归一化（与 display.ts 同口径）
       const midLon = (lonA + lonB) / 2;
       const q = Math.floor((midLon + 180) / 360);
       const toWindow = (lon: number): number => lon - 360 * q;
       segs.push({ x1: xOf(toWindow(lonA)), y1: yOf(aLat + (bLat - aLat) * ts[k]), x2: xOf(toWindow(lonB)), y2: yOf(aLat + (bLat - aLat) * ts[k + 1]) });
     }
-    prevLon = nextLon;
+  }
+  return segs;
+}
+
+/** 按短弧展开的原始航路，在日界线处同样分段绘制。 */
+function UnwrappedRoute({ raw }: { raw: MicroPoint[] }) {
+  // 这里的 raw 已由上层展开/校验；画面上对未通过校验的输入仍按相邻短弧连线；
+  // 恰好 180° 的边是歧义边，无法画出唯一走向，停在该边之前。
+  const lifted: MicroPoint[] = [{ lat: raw[0].lat, lon: raw[0].lon }];
+  for (let i = 1; i < raw.length; i++) {
+    let d: number;
+    try {
+      d = shortArcDelta(raw[i].lon, lifted[i - 1].lon);
+    } catch {
+      break;
+    }
+    lifted.push({ lat: raw[i].lat, lon: lifted[i - 1].lon + d });
+  }
+  if (lifted.length < 2) return null;
+  return (
+    <>
+      {liftedRouteScreenSegments(lifted).map((s, i) => (
+        <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} className="route" />
+      ))}
+    </>
+  );
+}
+
+/**
+ * 安全压缩预演线：展开坐标直接取自压缩结果（与保留下标、命中说明同一次计算）。
+ * 保留点画描边环并标注原航路点下标；归一化窗口取所在边的窗口，切点贴本侧。
+ */
+function PreviewRoute({ points, kept }: { points: MicroPoint[]; kept: number[] }) {
+  const screen = liftedRouteScreenSegments(points);
+  const markers: { x: number; y: number; index: number }[] = [];
+  for (let i = 0; i < points.length; i++) {
+    // 用所在边（末点用前一边）中点定窗口，使贴 180° 的点落在 +180° 一侧
+    const edge = i < points.length - 1 ? i : i - 1;
+    const midLon = (points[edge].lon + points[edge + 1].lon) / 2 / 1e6;
+    const q = Math.floor((midLon + 180) / 360);
+    markers.push({
+      x: xOf(points[i].lon / 1e6 - 360 * q),
+      y: yOf(points[i].lat / 1e6),
+      index: kept[i],
+    });
   }
   return (
     <>
-      {segs.map((s, i) => (
-        <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} className="route" />
+      {screen.map((s, i) => (
+        <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} className="preview" />
+      ))}
+      {markers.map((m, i) => (
+        <g key={i} className="preview-marker">
+          <circle cx={m.x} cy={m.y} r={7} className="preview-ring" />
+          <text x={m.x} y={m.y + 3.5}>{m.index}</text>
+        </g>
       ))}
     </>
   );
